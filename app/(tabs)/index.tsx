@@ -1,98 +1,318 @@
-import { Image } from 'expo-image';
-import { Platform, StyleSheet } from 'react-native';
+import React, { useEffect, useState } from "react";
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  StyleSheet,
+  ScrollView,
+  Dimensions,
+} from "react-native";
+import * as SQLite from "expo-sqlite";
 
-import { HelloWave } from '@/components/hello-wave';
-import ParallaxScrollView from '@/components/parallax-scroll-view';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { Link } from 'expo-router';
+/* ================= SAFE MATH ENGINE ================= */
+const calculateExpression = (expr: string): number => {
+  if (!/^[0-9+\-*/.() ]+$/.test(expr)) {
+    throw new Error("Invalid expression");
+  }
 
-export default function HomeScreen() {
+  const ops: any = { "+": 1, "-": 1, "*": 2, "/": 2 };
+  const stack: any[] = [];
+  const output: any[] = [];
+
+  const tokens = expr.match(/\d+(\.\d+)?|[()+\-*/]/g);
+  if (!tokens) throw new Error("Invalid");
+
+  tokens.forEach((t) => {
+    if (!isNaN(Number(t))) output.push(Number(t));
+    else if (t in ops) {
+      while (stack.length && ops[stack[stack.length - 1]] >= ops[t]) {
+        output.push(stack.pop());
+      }
+      stack.push(t);
+    } else if (t === "(") stack.push(t);
+    else if (t === ")") {
+      while (stack.length && stack[stack.length - 1] !== "(")
+        output.push(stack.pop());
+      stack.pop();
+    }
+  });
+
+  while (stack.length) output.push(stack.pop());
+
+  const calc: number[] = [];
+  output.forEach((t) => {
+    if (typeof t === "number") calc.push(t);
+    else {
+      const b = calc.pop()!;
+      const a = calc.pop()!;
+      switch (t) {
+        case "+": calc.push(a + b); break;
+        case "-": calc.push(a - b); break;
+        case "*": calc.push(a * b); break;
+        case "/": calc.push(a / b); break;
+      }
+    }
+  });
+
+  return calc[0];
+};
+
+export default function App() {
+  const [db, setDb] = useState<SQLite.SQLiteDatabase | null>(null);
+  const [input, setInput] = useState("");
+  const [result, setResult] = useState("");
+  const [history, setHistory] = useState<any[]>([]);
+  const [isScientific, setIsScientific] = useState(false);
+
+  /* ================= DB INIT ================= */
+  useEffect(() => {
+    const initDB = async () => {
+      const database = await SQLite.openDatabaseAsync("calculator.db");
+      setDb(database);
+
+      await database.execAsync(`
+        CREATE TABLE IF NOT EXISTS calculations (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          input TEXT,
+          result TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+      `);
+
+      const rows = await database.getAllAsync(
+        "SELECT * FROM calculations ORDER BY id DESC LIMIT 20"
+      );
+      setHistory(rows as any[]);
+    };
+    initDB();
+  }, []);
+
+  /* ================= BASIC FUNCTIONS ================= */
+  const handlePress = (v: string) => {
+    if (v === "=") calculateResult();
+    else if (v === "C") {
+      setInput("");
+      setResult("");
+    } else setInput((p) => p + v);
+  };
+
+  const calculateResult = async () => {
+    try {
+      const res = calculateExpression(input).toString();
+      setResult(res);
+      const entry = { input, result: res };
+      setHistory((p) => [entry, ...p]);
+      if (db)
+        await db.runAsync(
+          "INSERT INTO calculations (input, result) VALUES (?,?)",
+          [input, res]
+        );
+    } catch {
+      setResult("Error");
+    }
+  };
+
+  /* ================= SCIENTIFIC FUNCTIONS ================= */
+  const factorial = (n: number) => {
+    if (n < 0) return NaN;
+    let r = 1;
+    for (let i = 2; i <= n; i++) r *= i;
+    return r;
+  };
+
+  const calculateScientific = async (func: string) => {
+    try {
+      const v = Number(input);
+      let r: number;
+
+      switch (func) {
+        case "sin": r = Math.sin(v); break;
+        case "cos": r = Math.cos(v); break;
+        case "tan": r = Math.tan(v); break;
+        case "log": r = Math.log10(v); break;
+        case "ln": r = Math.log(v); break;
+        case "√": r = Math.sqrt(v); break;
+        case "^": r = Math.pow(v, 2); break;
+        case "!": r = factorial(v); break;
+        case "π": r = Math.PI; break;
+        case "e": r = Math.E; break;
+        default: return;
+      }
+
+      const res = r.toString();
+      setResult(res);
+      const entry = { input: `${func}(${input})`, result: res };
+      setHistory((p) => [entry, ...p]);
+      if (db)
+        await db.runAsync(
+          "INSERT INTO calculations (input, result) VALUES (?,?)",
+          [entry.input, res]
+        );
+    } catch {
+      setResult("Error");
+    }
+  };
+
+  const clearHistory = async () => {
+    if (!db) return;
+    await db.execAsync("DELETE FROM calculations");
+    setHistory([]);
+  };
+
+  /* ================= BUTTONS ================= */
+  const basicButtons = [
+    ["7", "8", "9", "/"],
+    ["4", "5", "6", "*"],
+    ["1", "2", "3", "-"],
+    ["0", ".", "=", "+"],
+    ["C"],
+  ];
+
+  const scientificButtons = [
+    ["sin", "cos", "tan", "log", "ln", "√", "^", "!"],
+    ["π", "e"],
+  ];
+
+  /* ================= UI ================= */
   return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: '#A1CEDC', dark: '#1D3D47' }}
-      headerImage={
-        <Image
-          source={require('@/assets/images/partial-react-logo.png')}
-          style={styles.reactLogo}
-        />
-      }>
-      <ThemedView style={styles.titleContainer}>
-        <ThemedText type="title">Welcome!</ThemedText>
-        <HelloWave />
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 1: Try it</ThemedText>
-        <ThemedText>
-          Edit <ThemedText type="defaultSemiBold">app/(tabs)/index.tsx</ThemedText> to see changes.
-          Press{' '}
-          <ThemedText type="defaultSemiBold">
-            {Platform.select({
-              ios: 'cmd + d',
-              android: 'cmd + m',
-              web: 'F12',
-            })}
-          </ThemedText>{' '}
-          to open developer tools.
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <Link href="/modal">
-          <Link.Trigger>
-            <ThemedText type="subtitle">Step 2: Explore</ThemedText>
-          </Link.Trigger>
-          <Link.Preview />
-          <Link.Menu>
-            <Link.MenuAction title="Action" icon="cube" onPress={() => alert('Action pressed')} />
-            <Link.MenuAction
-              title="Share"
-              icon="square.and.arrow.up"
-              onPress={() => alert('Share pressed')}
-            />
-            <Link.Menu title="More" icon="ellipsis">
-              <Link.MenuAction
-                title="Delete"
-                icon="trash"
-                destructive
-                onPress={() => alert('Delete pressed')}
-              />
-            </Link.Menu>
-          </Link.Menu>
-        </Link>
+    <View style={styles.screen}>
+      <View style={styles.calculatorWrapper}>
 
-        <ThemedText>
-          {`Tap the Explore tab to learn more about what's included in this starter app.`}
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 3: Get a fresh start</ThemedText>
-        <ThemedText>
-          {`When you're ready, run `}
-          <ThemedText type="defaultSemiBold">npm run reset-project</ThemedText> to get a fresh{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> directory. This will move the current{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> to{' '}
-          <ThemedText type="defaultSemiBold">app-example</ThemedText>.
-        </ThemedText>
-      </ThemedView>
-    </ParallaxScrollView>
+        {/* ====== DISPLAY ====== */}
+        <View style={styles.display}>
+          <Text style={styles.input}>{input || "0"}</Text>
+          <Text style={styles.result}>{result}</Text>
+        </View>
+
+        {/* ====== TOGGLE BUTTON ====== */}
+        <View style={{ flexDirection: "row", justifyContent: "flex-end", marginBottom: 5 }}>
+          <TouchableOpacity
+            style={{
+              padding: 8,
+              backgroundColor: "#FF9800",
+              borderRadius: 6,
+            }}
+            onPress={() => setIsScientific(prev => !prev)}
+          >
+            <Text style={{ color: "#fff", fontWeight: "bold" }}>
+              {isScientific ? "Basic Mode" : "Scientific Mode"}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* ====== HISTORY ====== */}
+        <View style={styles.historyWrapper}>
+          <View style={styles.historyHeader}>
+            <Text style={styles.historyTitle}>History</Text>
+            <TouchableOpacity onPress={clearHistory}>
+              <Text style={styles.clearText}>Clear</Text>
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView style={styles.historyBox}>
+            {history.length === 0 ? (
+              <Text style={styles.noHistory}>No history yet</Text>
+            ) : (
+              history.map((h, i) => (
+                <View key={i} style={styles.historyItem}>
+                  <Text style={styles.historyInput}>{h.input}</Text>
+                  <Text style={styles.historyResult}>= {h.result}</Text>
+                </View>
+              ))
+            )}
+          </ScrollView>
+        </View>
+
+        {/* ====== SCIENTIFIC BUTTONS ====== */}
+        {isScientific &&
+          scientificButtons.map((row, i) => (
+            <View key={i} style={styles.row}>
+              {row.map((b) => (
+                <TouchableOpacity
+                  key={b}
+                  style={[styles.button, styles.scientific]}
+                  onPress={() => calculateScientific(b)}
+                >
+                  <Text style={styles.btnText}>{b}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          ))}
+
+        {/* ====== BASIC BUTTONS ====== */}
+        {basicButtons.map((row, i) => (
+          <View key={i} style={styles.row}>
+            {row.map((b) => (
+              <TouchableOpacity
+                key={b}
+                style={styles.button}
+                onPress={() => handlePress(b)}
+              >
+                <Text style={styles.btnText}>{b}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        ))}
+
+      </View>
+    </View>
   );
 }
 
+/* ================= STYLES ================= */
 const styles = StyleSheet.create({
-  titleContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
+  screen: {
+    flex: 1,
+    backgroundColor: "#121212",
+    justifyContent: "center", // vertically center
+    alignItems: "center",     // horizontally center
+    padding: 10,
   },
-  stepContainer: {
-    gap: 8,
+  calculatorWrapper: {
+    width: "90%",
+    maxWidth: 420,
+  },
+  display: {
+    backgroundColor: "#222",
+    padding: 15,
+    borderRadius: 10,
+    alignItems: "flex-end",
     marginBottom: 8,
   },
-  reactLogo: {
-    height: 178,
-    width: 290,
-    bottom: 0,
-    left: 0,
-    position: 'absolute',
+  input: { fontSize: 28, color: "#fff" },
+  result: { fontSize: 20, color: "#aaa" },
+
+  historyWrapper: { maxHeight: 200, marginBottom: 10 },
+  historyHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 4,
   },
+  historyTitle: { color: "#fff", fontWeight: "bold" },
+  clearText: { color: "red", fontWeight: "bold" },
+  historyBox: {
+    backgroundColor: "#1e1e1e",
+    borderRadius: 8,
+    padding: 6,
+  },
+  historyItem: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 3,
+  },
+  historyInput: { color: "#ccc", fontSize: 14 },
+  historyResult: { color: "#fff", fontSize: 14 },
+  noHistory: { color: "#777", textAlign: "center" },
+
+  row: { flexDirection: "row", marginBottom: 5 },
+  button: {
+    flex: 1,
+    margin: 3,
+    padding: 12,
+    backgroundColor: "#4CAF50",
+    borderRadius: 8,
+    alignItems: "center",
+  },
+  scientific: { backgroundColor: "#FF5722" },
+  btnText: { color: "#fff", fontSize: 16, fontWeight: "bold" },
 });
