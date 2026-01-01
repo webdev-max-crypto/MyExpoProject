@@ -9,15 +9,14 @@ import {
 } from "react-native";
 import * as SQLite from "expo-sqlite";
 
-/* ================= SAFE MATH ENGINE ================= */
-const calculateExpression = (expr: string): number => {
-  if (!/^[0-9+\-*/.() ]+$/.test(expr)) {
-    throw new Error("Invalid expression");
-  }
+/* ================= SAFE MATH ENGINE WITH STEPS ================= */
+const calculateExpressionWithSteps = (expr: string): { result: number; steps: string[] } => {
+  if (!/^[0-9+\-*/.() ]+$/.test(expr)) throw new Error("Invalid expression");
 
   const ops: any = { "+": 1, "-": 1, "*": 2, "/": 2 };
   const stack: any[] = [];
   const output: any[] = [];
+  const steps: string[] = [];
 
   const tokens = expr.match(/\d+(\.\d+)?|[()+\-*/]/g);
   if (!tokens) throw new Error("Invalid");
@@ -45,22 +44,26 @@ const calculateExpression = (expr: string): number => {
     else {
       const b = calc.pop()!;
       const a = calc.pop()!;
+      let res = 0;
       switch (t) {
-        case "+": calc.push(a + b); break;
-        case "-": calc.push(a - b); break;
-        case "*": calc.push(a * b); break;
-        case "/": calc.push(a / b); break;
+        case "+": res = a + b; break;
+        case "-": res = a - b; break;
+        case "*": res = a * b; break;
+        case "/": res = a / b; break;
       }
+      steps.push(`${a} ${t} ${b} = ${res}`);
+      calc.push(res);
     }
   });
 
-  return calc[0];
+  return { result: calc[0], steps };
 };
 
 export default function App() {
   const [db, setDb] = useState<SQLite.SQLiteDatabase | null>(null);
   const [input, setInput] = useState("");
   const [result, setResult] = useState("");
+  const [steps, setSteps] = useState<string[]>([]);
   const [history, setHistory] = useState<any[]>([]);
   const [isScientific, setIsScientific] = useState(false);
 
@@ -93,22 +96,27 @@ export default function App() {
     else if (v === "C") {
       setInput("");
       setResult("");
+      setSteps([]);
     } else setInput((p) => p + v);
   };
 
   const calculateResult = async () => {
     try {
-      const res = calculateExpression(input).toString();
-      setResult(res);
-      const entry = { input, result: res };
+      const { result: res, steps } = calculateExpressionWithSteps(input);
+      setResult(res.toString());
+      setSteps(steps);
+
+      const entry = { input, result: res.toString() };
       setHistory((p) => [entry, ...p]);
+
       if (db)
         await db.runAsync(
           "INSERT INTO calculations (input, result) VALUES (?,?)",
-          [input, res]
+          [input, res.toString()]
         );
     } catch {
       setResult("Error");
+      setSteps([]);
     }
   };
 
@@ -141,6 +149,8 @@ export default function App() {
 
       const res = r.toString();
       setResult(res);
+      setSteps([`${func}(${v}) = ${res}`]); // Show as a single step
+
       const entry = { input: `${func}(${input})`, result: res };
       setHistory((p) => [entry, ...p]);
       if (db)
@@ -150,6 +160,7 @@ export default function App() {
         );
     } catch {
       setResult("Error");
+      setSteps([]);
     }
   };
 
@@ -183,6 +194,15 @@ export default function App() {
           <Text style={styles.input}>{input || "0"}</Text>
           <Text style={styles.result}>{result}</Text>
         </View>
+
+        {/* ====== STEP-BY-STEP DISPLAY ====== */}
+        {steps.length > 0 && (
+          <View style={{ backgroundColor: "#1e1e1e", padding: 8, borderRadius: 8, marginBottom: 5 }}>
+            {steps.map((s, i) => (
+              <Text key={i} style={{ color: "#FFD700", fontSize: 14 }}>{s}</Text>
+            ))}
+          </View>
+        )}
 
         {/* ====== TOGGLE BUTTON ====== */}
         <View style={{ flexDirection: "row", justifyContent: "flex-end", marginBottom: 5 }}>
@@ -264,8 +284,8 @@ const styles = StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: "#121212",
-    justifyContent: "center", // vertically center
-    alignItems: "center",     // horizontally center
+    justifyContent: "center",
+    alignItems: "center",
     padding: 10,
   },
   calculatorWrapper: {
